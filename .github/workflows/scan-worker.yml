@@ -1,0 +1,68 @@
+# ── Sentinel Scanner — On-Demand Worker ──────────────────────────────
+# Triggered by repository_dispatch from Vercel when a new scan job is
+# pushed to Redis. Wakes up, processes ALL pending jobs, then exits.
+#
+# 💰 Runs on the public repo = UNLIMITED free minutes.
+# ⚡ Only runs when there's actual work — zero wasted compute.
+# ─────────────────────────────────────────────────────────────────────
+name: Scan Worker
+
+on:
+  repository_dispatch:
+    types: [scan]
+  # Fallback: run every 30 minutes to catch any missed jobs
+  schedule:
+    - cron: "*/30 * * * *"
+  # Allow manual trigger for testing
+  workflow_dispatch:
+
+jobs:
+  process-scans:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        queue:
+          - fast_network_scans
+          - heavy_sast_scans
+          - periodic_cron_scans
+      # Don't cancel other queue workers if one fails
+      fail-fast: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nmap postgresql-client
+
+      - name: Install Nuclei
+        run: |
+          NUCLEI_VERSION=v3.1.8
+          wget -q "https://github.com/projectdiscovery/nuclei/releases/download/${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION#v}_linux_amd64.zip"
+          unzip -o "nuclei_${NUCLEI_VERSION#v}_linux_amd64.zip" nuclei
+          sudo mv nuclei /usr/local/bin/
+          rm "nuclei_${NUCLEI_VERSION#v}_linux_amd64.zip"
+          nuclei -version
+
+      - name: Install Python deps
+        run: pip install celery redis psycopg2-binary SQLAlchemy requests aiohttp google-genai python-nmap
+
+      - name: Run worker for ${{ matrix.queue }}
+        env:
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          INTERNAL_API_URL: ${{ secrets.INTERNAL_API_URL }}
+          INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
+          LOCAL_SANDBOX_DEV: "true"
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python consume_jobs.py "${{ matrix.queue }}" --timeout 600
