@@ -59,8 +59,31 @@ if REDIS_URL.startswith(("http://", "https://")):
         "socket URL (rediss://default:<token>@<endpoint>:6379) instead."
     )
 
-r = redis.Redis.from_url(REDIS_URL, ssl_cert_reqs=None)
-print(f"[Worker] Connected to Redis. Listening on queue: {QUEUE}")
+r = None
+
+
+def connect_redis():
+    """Open a fresh Redis connection and verify it responds.
+
+    Upstash serves rediss:// over TLS and closes idle sockets, so a
+    long-running scan can outlive the connection (next command raises
+    TimeoutError). The worker therefore reconnects after every job instead
+    of reusing a stale socket.
+    """
+    global r
+    r = redis.Redis.from_url(
+        REDIS_URL,
+        ssl_cert_reqs=None,
+        socket_timeout=30,
+        socket_connect_timeout=10,
+        retry_on_timeout=True,
+    )
+    r.ping()
+    print(f"[Worker] Connected to Redis. Listening on queue: {QUEUE}")
+    return r
+
+
+connect_redis()
 print(f"[Worker] Timeout: {TIMEOUT}s, idle exit: {IDLE_EXIT}s")
 
 # ── Import task functions (lazy — after Redis is up) ────────────────────
@@ -177,8 +200,28 @@ def main():
             print(f"[Worker] Queue idle for {IDLE_EXIT}s. Exiting.")
             break
 
+        # Ensure a live connection (fresh socket — Upstash closes idle TLS
+        # connections, so a stale one raises TimeoutError on the next poll).
+        if r is None:
+            try:
+                connect_redis()
+            except Exception as exc:
+                print(f"[Worker] Initial connect failed: {exc}. Retrying in 5s...")
+                time.sleep(5)
+                continue
+
         # Pull one job from queue (blocking with short timeout)
-        result = r.blpop(QUEUE, timeout=5)
+        try:
+            result = r.blpop(QUEUE, timeout=5)
+        except redis.RedisError as exc:
+            print(f"[Worker] Redis poll error: {exc}. Reconnecting...")
+            try:
+                r.close()
+            except Exception:
+                pass
+            r = None
+            continue
+
         if result is None:
             # No job available within timeout — keep waiting
             print(f"[Worker] No jobs in queue '{QUEUE}'. Waiting... ({int(idle_time)}s idle)")
@@ -198,6 +241,18 @@ def main():
             f"(id={decoded['task_id'][:8]}...) "
             f"at {datetime.utcnow().isoformat()}"
         )
+
+        # Fresh connection for task execution + meta write: the BLPOP above
+        # may have run on a socket that dies during a long scan.
+        try:
+            r.close()
+        except Exception:
+            pass
+        try:
+            connect_redis()
+        except Exception as exc:
+            print(f"[Worker] Pre-task reconnect failed: {exc}")
+            r = None
 
         success, _result = run_task(
             task_name=decoded["task_name"],

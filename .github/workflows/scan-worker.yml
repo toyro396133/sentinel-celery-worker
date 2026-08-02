@@ -41,7 +41,7 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends nmap postgresql-client
+          sudo apt-get install -y --no-install-recommends nmap postgresql-client bind9-dnsutils
 
       - name: Install Nuclei
         run: |
