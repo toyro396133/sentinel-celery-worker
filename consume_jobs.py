@@ -83,7 +83,11 @@ def connect_redis():
     return r
 
 
-connect_redis()
+try:
+    connect_redis()
+except Exception as exc:
+    print(f"[Worker] Initial connect failed ({exc}); will retry in the main loop.")
+    r = None
 print(f"[Worker] Timeout: {TIMEOUT}s, idle exit: {IDLE_EXIT}s")
 
 # ── Import task functions (lazy — after Redis is up) ────────────────────
@@ -184,6 +188,7 @@ def run_task(task_name: str, args: list, kwargs: dict, task_id: str = None) -> t
 
 
 def main():
+    global r
     start_time = time.time()
     last_job_time = time.time()
     jobs_processed = 0
