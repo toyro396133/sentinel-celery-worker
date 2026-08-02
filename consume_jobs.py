@@ -49,7 +49,15 @@ IDLE_EXIT = args.idle_exit
 
 # ── Redis connection ────────────────────────────────────────────────────
 REDIS_URL = os.environ.get("REDIS_URL", os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0"))
-REDIS_URL = REDIS_URL.replace("rediss://", "redis://")  # redis-py <5 doesn't support rediss directly
+# NOTE: keep the scheme as-is. Upstash requires TLS on the socket endpoint
+# (rediss://...), so stripping rediss→redis would break the connection.
+# redis-py >= 5 supports rediss:// natively; ssl_cert_reqs=None is fine for
+# the managed certs Upstash serves.
+if REDIS_URL.startswith(("http://", "https://")):
+    raise SystemExit(
+        "[Worker] REDIS_URL is an Upstash REST URL — the worker needs the "
+        "socket URL (rediss://default:<token>@<endpoint>:6379) instead."
+    )
 
 r = redis.Redis.from_url(REDIS_URL, ssl_cert_reqs=None)
 print(f"[Worker] Connected to Redis. Listening on queue: {QUEUE}")
@@ -97,20 +105,43 @@ def decode_celery_message(raw: bytes) -> dict | None:
     }
 
 
-def run_task(task_name: str, args: list, kwargs: dict) -> bool:
+CELERY_RESULT_KEY_PREFIX = "celery-task-meta-"
+
+
+def write_result_meta(task_id: str, status: str, result=None, traceback_str: str = None):
+    """
+    Write the Celery result-backend meta key (celery-task-meta-<id>) so the
+    Next.js polling endpoint (getCeleryTaskResult) sees SUCCESS/FAILURE
+    instead of PENDING. Without this, public scan jobs would hang at PENDING
+    forever even after the task runs to completion.
+    """
+    if not task_id:
+        return
+    meta = {"status": status, "result": result, "traceback": traceback_str}
+    try:
+        # TTL 24h: long enough for the polling window, short enough to avoid
+        # unbounded key growth in the shared Redis instance.
+        r.set(f"{CELERY_RESULT_KEY_PREFIX}{task_id}", json.dumps(meta, default=str), ex=86400)
+        print(f"[Worker] Wrote result meta for {task_id}: {status}")
+    except Exception as exc:
+        print(f"[Worker] Failed to write result meta for {task_id}: {exc}")
+
+
+def run_task(task_name: str, args: list, kwargs: dict, task_id: str = None) -> tuple:
     """
     Look up the registered Celery task and call its function directly.
-    Returns True on success, False on failure.
+    Returns (success: bool, result_value) so callers can persist the
+    Celery result-backend meta.
     """
     try:
         task = celery_app.tasks.get(task_name)
     except Exception:
         print(f"[Worker] Task not found in registry: {task_name}")
-        return False
+        return False, None
 
     if task is None:
         print(f"[Worker] Task not registered: {task_name}")
-        return False
+        return False, None
 
     print(f"[Worker] Running task: {task_name} with args={args}, kwargs={kwargs}")
     try:
@@ -118,13 +149,15 @@ def run_task(task_name: str, args: list, kwargs: dict) -> bool:
         # re-queue it; we want to run it synchronously right here)
         task_func = task.__call__
         result = task_func(*args, **kwargs)
-        print(f"[Worker] Task completed: {task_name} → {result}")
-        return True
+        print(f"[Worker] Task completed: {task_name}")
+        write_result_meta(task_id, "SUCCESS", result=result)
+        return True, result
     except Exception as exc:
         print(f"[Worker] Task failed: {task_name} → {exc}")
         import traceback
         traceback.print_exc()
-        return False
+        write_result_meta(task_id, "FAILURE", traceback_str=traceback.format_exc())
+        return False, None
 
 
 def main():
@@ -166,10 +199,11 @@ def main():
             f"at {datetime.utcnow().isoformat()}"
         )
 
-        success = run_task(
+        success, _result = run_task(
             task_name=decoded["task_name"],
             args=decoded["args"],
             kwargs=decoded["kwargs"],
+            task_id=decoded["task_id"],
         )
 
         if success:
