@@ -144,6 +144,11 @@ def write_result_meta(task_id: str, status: str, result=None, traceback_str: str
     """
     if not task_id:
         return
+    if r is None:
+        # No live connection (e.g. pre-task reconnect failed). Surface it
+        # clearly instead of a misleading caught AttributeError below.
+        print(f"[Worker] No Redis connection; result meta for {task_id} not written.")
+        return
     meta = {"status": status, "result": result, "traceback": traceback_str}
     try:
         # TTL 24h: long enough for the polling window, short enough to avoid
