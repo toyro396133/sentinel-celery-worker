@@ -86,7 +86,7 @@ def check_and_alert_sla_breaches():
             with conn.cursor() as cur:
                 cur.execute(
                     'SELECT f."id", f."title", f."severity", f."slaDueDate", t."domain" '
-                    'FROM "ScanFinding" f JOIN targets t ON f."targetId" = t.id '
+                    'FROM "ScanFinding" f JOIN "Target" t ON f."targetId" = t."id" '
                     'WHERE f."status" IN (\'OPEN\', \'IN_PROGRESS\') AND f."slaDueDate" < NOW()'
                 )
                 breached = cur.fetchall()
@@ -126,7 +126,7 @@ def auto_schedule_re_scans():
         with db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id, domain, last_scan_mode FROM targets WHERE is_verified = TRUE AND plan_level IN ('PRO', 'ENTERPRISE')"
+                    "SELECT "id", "domain", "lastScanMode" FROM "Target" WHERE "isVerified" = TRUE AND "planLevel" IN ('PRO', 'ENTERPRISE')"
                 )
                 targets = cur.fetchall()
                 print(f"[Celery Beat Schedule] Detected {len(targets)} premium (PRO/ENTERPRISE) targets qualified for automatic weekly re-audit.")
@@ -265,10 +265,10 @@ def run_vulnerability_scan(target_id: str, domain: str, mode: str, scan_job_id: 
             with db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "UPDATE targets SET last_scan_status = 'PENDING', last_scan_mode = %s, last_scan_time = NOW() WHERE id = %s",
+                        "UPDATE "Target" SET "lastScanStatus" = 'PENDING', "lastScanMode" = %s, "lastScanTime" = NOW() WHERE "id" = %s",
                         (mode, target_id)
                     )
-                    cur.execute("SELECT auth_metadata FROM targets WHERE id = %s", (target_id,))
+                    cur.execute("SELECT "authMetadata" FROM "Target" WHERE "id" = %s", (target_id,))
                     row = cur.fetchone()
                     if row and row[0]:
                         auth_metadata_str = decrypt_confidential_envelope(row[0])
@@ -286,7 +286,7 @@ def run_vulnerability_scan(target_id: str, domain: str, mode: str, scan_job_id: 
                 with db_connection() as conn:
                     with conn.cursor() as cur:
                         cur.execute(
-                            "UPDATE targets SET last_scan_status = 'FAILED', last_scan_result = %s WHERE id = %s",
+                            "UPDATE "Target" SET "lastScanStatus" = 'FAILED', "lastScanResult" = %s WHERE "id" = %s",
                             (json.dumps({"error": f"Sandbox execution failure: {str(ex)}"}), target_id)
                         )
             except Exception as dberr:
@@ -302,7 +302,7 @@ def run_vulnerability_scan(target_id: str, domain: str, mode: str, scan_job_id: 
                 with db_connection() as conn:
                     with conn.cursor() as cur:
                         cur.execute(
-                            "UPDATE targets SET last_scan_status = 'FAILED', last_scan_result = %s WHERE id = %s",
+                            "UPDATE "Target" SET "lastScanStatus" = 'FAILED', "lastScanResult" = %s WHERE "id" = %s",
                             (json.dumps({"error": err_msg}), target_id)
                         )
             except Exception as dberr:
@@ -329,10 +329,10 @@ def run_vulnerability_scan(target_id: str, domain: str, mode: str, scan_job_id: 
             with db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "UPDATE targets SET last_scan_status = 'PENDING', last_scan_mode = %s, last_scan_time = NOW() WHERE id = %s",
+                        "UPDATE "Target" SET "lastScanStatus" = 'PENDING', "lastScanMode" = %s, "lastScanTime" = NOW() WHERE "id" = %s",
                         (mode, target_id)
                     )
-                    cur.execute("SELECT auth_metadata FROM targets WHERE id = %s", (target_id,))
+                    cur.execute("SELECT "authMetadata" FROM "Target" WHERE "id" = %s", (target_id,))
                     row = cur.fetchone()
                     if row and row[0]:
                         auth_metadata_str = decrypt_confidential_envelope(row[0])
@@ -458,7 +458,7 @@ Passive review for target **{domain}** concluded successfully. Cognitive report 
         with db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE targets SET last_scan_status = 'COMPLETED', last_scan_result = %s, last_ai_report = %s WHERE id = %s",
+                    "UPDATE "Target" SET "lastScanStatus" = 'COMPLETED', "lastScanResult" = %s, "lastAiReport" = %s WHERE "id" = %s",
                     (json.dumps(scan_findings), ai_report_markdown, target_id)
                 )
                 
@@ -543,7 +543,7 @@ Passive review for target **{domain}** concluded successfully. Cognitive report 
             with db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "UPDATE targets SET last_scan_status = 'FAILED', last_scan_result = %s WHERE id = %s",
+                        "UPDATE "Target" SET "lastScanStatus" = 'FAILED', "lastScanResult" = %s WHERE "id" = %s",
                         (json.dumps({"error": f"Scanner failure: {str(e)}"}), target_id)
                     )
         except Exception as dberr:
@@ -586,7 +586,7 @@ def run_source_code_audit(target_id: str, repo_url: str, latest_commit_sha: str 
         with db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE targets SET last_scan_status = 'PENDING', last_scan_mode = 'SAST', last_scan_time = NOW() WHERE id = %s",
+                    "UPDATE "Target" SET "lastScanStatus" = 'PENDING', "lastScanMode" = 'SAST', "lastScanTime" = NOW() WHERE "id" = %s",
                     (target_id,)
                 )
     except Exception as e:
@@ -611,7 +611,7 @@ def run_source_code_audit(target_id: str, repo_url: str, latest_commit_sha: str 
                 with db_connection() as conn:
                     with conn.cursor() as cur:
                         cur.execute(
-                            "UPDATE targets SET last_scan_status = 'FAILED', last_scan_result = %s WHERE id = %s",
+                            "UPDATE "Target" SET "lastScanStatus" = 'FAILED', "lastScanResult" = %s WHERE "id" = %s",
                             (json.dumps({"error": f"Strict sandbox orchestration failure: {sandbox_err}"}), target_id)
                         )
             except Exception as dberr:
@@ -719,7 +719,7 @@ Codebase audit on repository **{repo_url}** finalized.
         with db_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE targets SET last_scan_status = 'COMPLETED', last_scan_result = %s, last_ai_report = %s WHERE id = %s",
+                    "UPDATE "Target" SET "lastScanStatus" = 'COMPLETED', "lastScanResult" = %s, "lastAiReport" = %s WHERE "id" = %s",
                     (json.dumps(scan_findings), ai_report_markdown, target_id)
                 )
                 
@@ -814,7 +814,7 @@ Codebase audit on repository **{repo_url}** finalized.
             with db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "UPDATE targets SET last_scan_status = 'FAILED', last_scan_result = %s WHERE id = %s",
+                        "UPDATE "Target" SET "lastScanStatus" = 'FAILED', "lastScanResult" = %s WHERE "id" = %s",
                         (json.dumps({"error": f"SAST storage error: {str(db_err)}"}), target_id)
                     )
         except Exception as dberr:
@@ -838,7 +838,7 @@ def verify_single_finding_fix(target_id: str, finding_id: str, test_type: str = 
             with conn.cursor() as cur:
                 cur.execute(
                     'SELECT f."title", f."severity", t."domain", f."status" '
-                    'FROM "ScanFinding" f JOIN targets t ON f."targetId" = t.id '
+                    'FROM "ScanFinding" f JOIN "Target" t ON f."targetId" = t."id" '
                     'WHERE f."id" = %s AND t."id" = %s',
                     (finding_id, target_id)
                 )
