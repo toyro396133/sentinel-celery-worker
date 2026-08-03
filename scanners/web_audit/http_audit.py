@@ -33,6 +33,7 @@ async def async_unpwned_cookie_cors_and_headers_audit(domain: str) -> list:
                         # Check security flags
                         is_httponly = "httponly" in cookie_val.lower()
                         is_secure = "secure" in cookie_val.lower()
+                        is_samesite = "samesite" in cookie_val.lower()
                         
                         if not is_httponly:
                             findings.append({
@@ -49,6 +50,14 @@ async def async_unpwned_cookie_cors_and_headers_audit(domain: str) -> list:
                                 "severity": "LOW",
                                 "description": f"The cookie '{cookie_name}' is transmitted over HTTPS connection without Secure attribute flag.",
                                 "remediation": "Append the 'Secure' attribute to keep cookie state encrypted during transport."
+                            })
+                        if not is_samesite:
+                            findings.append({
+                                "id": f"COOKIE-SAMESITE-MISSING-{cookie_name}",
+                                "title": f"SameSite Attribute Missing on Cookie '{cookie_name}' for {domain}",
+                                "severity": "LOW",
+                                "description": f"The cookie '{cookie_name}' set by {scheme}://{domain} does not define the SameSite attribute, leaving it exposed to cross-site request forgery and cross-site tracking.",
+                                "remediation": "Add SameSite=Lax or SameSite=Strict to the Set-Cookie directive."
                             })
                     
                     if scheme == "https":
@@ -100,6 +109,22 @@ async def async_unpwned_cookie_cors_and_headers_audit(domain: str) -> list:
                                 "severity": "LOW",
                                 "description": f"The target domain {domain} does not publish the Referrer-Policy header, leaving referrer leakage to the browser default (full URL).",
                                 "remediation": "Add the Referrer-Policy header (e.g. strict-origin-when-cross-origin)."
+                            })
+                        if "permissions-policy" not in headers_dict:
+                            findings.append({
+                                "id": "HEADER-PERMISSIONS-POLICY-MISSING",
+                                "title": f"Missing Permissions-Policy Header on {domain}",
+                                "severity": "LOW",
+                                "description": f"The target domain {domain} does not publish the Permissions-Policy header, leaving powerful browser features (camera, microphone, geolocation) enabled for all origins by default.",
+                                "remediation": "Add the Permissions-Policy header and restrict powerful features to trusted origins."
+                            })
+                        if "x-xss-protection" not in headers_dict:
+                            findings.append({
+                                "id": "HEADER-XSS-PROTECTION-MISSING",
+                                "title": f"Missing X-XSS-Protection Header on {domain}",
+                                "severity": "LOW",
+                                "description": f"The target domain {domain} does not publish the X-XSS-Protection header, leaving the browser's legacy reflective-XSS filter at its default setting.",
+                                "remediation": "Add the X-XSS-Protection: 1; mode=block header (legacy control; prefer a strong CSP)."
                             })
             except Exception as e:
                 print(f"[web_audit] Cookie/CORS/Headers audit exception ({scheme}) on {domain}: {e}")
