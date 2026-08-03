@@ -77,6 +77,30 @@ async def async_unpwned_cookie_cors_and_headers_audit(domain: str) -> list:
                                 "description": f"The domain does not enforce HSTS, permitting HTTP access downgrade attacks.",
                                 "remediation": "Add the Strict-Transport-Security (HSTS) header to enforce strict connection parameters."
                             })
+                        if "x-frame-options" not in headers_dict:
+                            findings.append({
+                                "id": "HEADER-XFO-MISSING",
+                                "title": f"Missing X-Frame-Options Header on {domain}",
+                                "severity": "MEDIUM",
+                                "description": f"The target domain {domain} does not publish the X-Frame-Options header, leaving the page open to clickjacking via malicious frames.",
+                                "remediation": "Add the X-Frame-Options header (DENY or SAMEORIGIN) or a CSP frame-ancestors directive."
+                            })
+                        if "x-content-type-options" not in headers_dict:
+                            findings.append({
+                                "id": "HEADER-NOSNIFF-MISSING",
+                                "title": f"Missing X-Content-Type-Options Header on {domain}",
+                                "severity": "LOW",
+                                "description": f"The target domain {domain} does not publish the X-Content-Type-Options: nosniff header, allowing browsers to MIME-sniff responses.",
+                                "remediation": "Add the X-Content-Type-Options: nosniff header to prevent MIME sniffing."
+                            })
+                        if "referrer-policy" not in headers_dict:
+                            findings.append({
+                                "id": "HEADER-REFERRER-POLICY-MISSING",
+                                "title": f"Missing Referrer-Policy Header on {domain}",
+                                "severity": "LOW",
+                                "description": f"The target domain {domain} does not publish the Referrer-Policy header, leaving referrer leakage to the browser default (full URL).",
+                                "remediation": "Add the Referrer-Policy header (e.g. strict-origin-when-cross-origin)."
+                            })
             except Exception as e:
                 print(f"[web_audit] Cookie/CORS/Headers audit exception ({scheme}) on {domain}: {e}")
 
